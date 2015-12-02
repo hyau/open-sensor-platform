@@ -27,6 +27,7 @@
 #include "SensorPackets.h"
 #include "BlockMemory.h"
 #include "Queue.h"
+#include "Driver_OUT.h"
 
 #define HIF_PACKET_SIZE    M_CalcBufferSize(sizeof(HostIFPackets_t))
 
@@ -40,6 +41,7 @@ void CHostif_StartTxChained(uint8_t *pBuf, uint16_t size, uint8_t *pBuf_next, ui
 \*-------------------------------------------------------------------------*/
 OSP_STATUS_t Algorithm_SubscribeSensor( ASensorType_t sensor);
 OSP_STATUS_t Algorithm_UnsubscribeSensor( ASensorType_t sensor);
+
 
 /*-------------------------------------------------------------------------*\
  |    P R I V A T E   C O N S T A N T S   &   M A C R O S
@@ -130,6 +132,7 @@ static int GetSensorState(ASensorType_t sen)
 static SH_RegArea_t SlaveRegMap;
 static uint8_t QueueOverFlow = 0;
 Queue_t *_HiFNonWakeupQueue = NULL;
+static void (*PacketRcv)(void *pkt, int len);
 
 /* Memory Pool for Sensor Data Packet for NonWakeup sensor and Wakeup sensor */
 DECLARE_BLOCK_POOL( SensorDataPacketPool, HIF_PACKET_SIZE, HIF_SENSOR_DATA_PACKET_POOL_SIZE );
@@ -280,224 +283,6 @@ static void SH_Slave_init(void)
     SlaveRegMap.rd_mem[0] = 0;
 }
 
-
-/***************************************************************************
- * @fn      SendSensorBoolData
- *          Packetizes in HIF format and queue data for host.
- *
- ***************************************************************************/
-
-static void SendSensorBoolData(ASensorType_t sensorType, MsgSensorBoolData *pMsg)
-{
-    Buffer_t    *pHifPacket;
-    uint8_t     *pPayload;
-    int16_t status;
-
-    // Do not send data if host did not activate this sensor type
-    if (GetSensorState(sensorType) == 0)
-        return;
-
-    /* Allocate packet buffer, packetize and place in queue */
-
-    pHifPacket = (Buffer_t *) AllocBlock( SensorDataPacketPool );
-    if (pHifPacket == NULL) {
-        D0_printf("OOPS! Couldn't alloc packet [%s] for %d\r\n", __FUNCTION__, sensorType);
-        return;
-    }
-
-    pPayload = M_GetBufferDataStart(pHifPacket);
-
-    /* Process sensor and format into packet */
-    switch (sensorType) {
-    case SENSOR_STEP_DETECTOR:
-        {
-            StepDetector_t stepDetectorData;
-
-            stepDetectorData.TimeStamp.TS64 = pMsg->timeStamp;
-            stepDetectorData.StepDetected   = pMsg->active;
-
-            /* Format Packet */
-            pHifPacket->Header.Length = FormatStepDetectorPkt( pPayload, &stepDetectorData, sensorType );
-        }
-        break;
-
-    case SENSOR_SIGNIFICANT_MOTION:
-        {
-            SignificantMotion_t motionData;
-
-            motionData.TimeStamp.TS64 = pMsg->timeStamp;
-            motionData.MotionDetected = pMsg->active;
-
-            /* Format Packet */
-            pHifPacket->Header.Length = FormatSignificantMotionPktFixP( pPayload, &motionData, sensorType );
-        }
-        break;
-
-    default:
-        /* Free the buffer */
-        status = FreeBlock( SensorDataPacketPool, pHifPacket );
-        ASF_assert( status == OSP_STATUS_OK );
-        D0_printf("Unhandled sensor [%d] in %s!\r\n", sensorType, __FUNCTION__);
-        return;
-    }
-
-    /* Enqueue packet in HIF queue */
-    if (pHifPacket->Header.Length > 0) {
-        status = EnQueue( _HiFNonWakeupQueue, pHifPacket );
-        ASF_assert(status == OSP_STATUS_OK);
-    } else {
-        /* Free the packet */
-        D0_printf("Packetization error [%d] for sensor %d\r\n", pHifPacket->Header.Length, sensorType);
-        status = FreeBlock( SensorDataPacketPool, pHifPacket );
-        ASF_assert( status == OSP_STATUS_OK );
-    }
-}
-
-
-/***************************************************************************
- * @fn      SendSensorData
- *          Sends 3-axis sensor data over the I2C slave interface
-
- * Enqueues data only.
- *
- ***************************************************************************/
-static void SendSensorData(ASensorType_t sensorType, MsgSensorData *pMsg)
-{
-    Buffer_t    *pHifPacket;
-    uint8_t        *pPayload;
-    int16_t status;
-
-    // Do not send data if host did not activate this sensor type
-    if (GetSensorState(sensorType) == 0)
-        return;
-
-    /* Allocate packet buffer, packetize and place in queue */
-
-    pHifPacket = (Buffer_t *) AllocBlock( SensorDataPacketPool );
-    if (pHifPacket == NULL) {
-        D0_printf("OOPS! Couldn't alloc packet [%s] for %d\r\n", __FUNCTION__, sensorType);
-        return;
-    }
-
-    pPayload = M_GetBufferDataStart(pHifPacket);
-
-    /* Process sensor and format into packet */
-    switch (sensorType) {
-    case AP_PSENSOR_ACCELEROMETER_UNCALIBRATED:
-    case SENSOR_MAGNETIC_FIELD_UNCALIBRATED:
-    case SENSOR_GYROSCOPE_UNCALIBRATED:
-        {
-            UncalibratedFixP_t  UnCalFixPData;
-
-            UnCalFixPData.TimeStamp.TS64 = pMsg->timeStamp;
-            UnCalFixPData.Axis[0]    = pMsg->X;
-            UnCalFixPData.Axis[1]    = pMsg->Y;
-            UnCalFixPData.Axis[2]    = pMsg->Z;
-            UnCalFixPData.Offset[0]    = 0;
-            UnCalFixPData.Offset[1]    = 0;
-            UnCalFixPData.Offset[2]    = 0;
-
-            pHifPacket->Header.Length = FormatUncalibratedPktFixP(pPayload,
-                &UnCalFixPData, META_DATA_UNUSED, sensorType);
-        }
-        break;
-
-    case SENSOR_ACCELEROMETER:
-    case SENSOR_MAGNETIC_FIELD:
-    case SENSOR_GYROSCOPE:
-        {
-            CalibratedFixP_t    CalFixPData;
-
-            CalFixPData.TimeStamp.TS64 = pMsg->timeStamp;
-            CalFixPData.Axis[0]    = pMsg->X;
-            CalFixPData.Axis[1]    = pMsg->Y;
-            CalFixPData.Axis[2]    = pMsg->Z;
-
-            pHifPacket->Header.Length = FormatCalibratedPktFixP(pPayload,
-                &CalFixPData, sensorType);
-        }
-        break;
-
-    case SENSOR_ROTATION_VECTOR:
-    case SENSOR_GEOMAGNETIC_ROTATION_VECTOR:
-    case SENSOR_GAME_ROTATION_VECTOR:
-        {
-            QuaternionFixP_t    QuatFixPData;
-
-            QuatFixPData.TimeStamp.TS64 = pMsg->timeStamp;
-            QuatFixPData.Quat[0]    = pMsg->W;
-            QuatFixPData.Quat[1]    = pMsg->X;
-            QuatFixPData.Quat[2]    = pMsg->Y;
-            QuatFixPData.Quat[3]    = pMsg->Z;
-
-            pHifPacket->Header.Length = FormatQuaternionPktFixP(pPayload,
-                &QuatFixPData, sensorType);
-        }
-        break;
-
-    case SENSOR_GRAVITY:
-    case SENSOR_LINEAR_ACCELERATION:
-        {
-            ThreeAxisFixP_t fixPData;
-
-            fixPData.TimeStamp.TS64 = pMsg->timeStamp;
-            fixPData.Axis[0]    = pMsg->X;
-            fixPData.Axis[1]    = pMsg->Y;
-            fixPData.Axis[2]    = pMsg->Z;
-
-            pHifPacket->Header.Length = FormatThreeAxisPktFixP(pPayload,
-                &fixPData, sensorType);
-        }
-        break;
-
-    case SENSOR_ORIENTATION:
-        {
-            OrientationFixP_t fixPData;
-
-            fixPData.TimeStamp.TS64 = pMsg->timeStamp;
-            fixPData.Pitch  = pMsg->X;
-            fixPData.Roll   = pMsg->Y;
-            fixPData.Yaw    = pMsg->Z;
-
-            pHifPacket->Header.Length = FormatOrientationFixP(pPayload,
-                &fixPData, sensorType);
-        }
-        break;
-
-    case SENSOR_STEP_COUNTER:
-        {
-            StepCounter_t stepCountData;
-
-            stepCountData.TimeStamp.TS64 = pMsg->timeStamp;
-            stepCountData.NumStepsTotal  = pMsg->X;
-
-            /* Format Packet */
-            pHifPacket->Header.Length = FormatStepCounterPkt( pPayload, &stepCountData, sensorType );
-        }
-        break;
-
-    case SENSOR_PRESSURE:
-        //TODO - Ignore for now!
-    default:
-        /* Free the buffer */
-        status = FreeBlock( SensorDataPacketPool, pHifPacket );
-        ASF_assert( status == OSP_STATUS_OK );
-        D0_printf("Unhandled sensor [%d] in %s!\r\n", sensorType, __FUNCTION__);
-        return;
-    }
-
-    /* Enqueue packet in HIF queue */
-    if (pHifPacket->Header.Length > 0) {
-        status = EnQueue( _HiFNonWakeupQueue, pHifPacket );
-        ASF_assert(status == OSP_STATUS_OK);
-    } else {
-        /* Free the packet */
-        D0_printf("Packetization error [%d] for sensor %d\r\n", pHifPacket->Header.Length, sensorType);
-        status = FreeBlock( SensorDataPacketPool, pHifPacket );
-        ASF_assert( status == OSP_STATUS_OK );
-    }
-}
-
 extern volatile int i2cdoneflag;
 
 /*------------------------------------------------------------------------*\
@@ -604,7 +389,8 @@ uint8_t process_command(uint8_t *rx_buf, uint16_t length)
 
     case OSP_DATA_IN:        /* Write data */
         /* Host has written a packet */
-        ParseHostInterfacePkt(&Out, &rx_buf[1], length-1);
+        /* ParseHostInterfacePkt(&Out, &rx_buf[1], length-1); */
+        PacketRcv(&rx_buf[1], length - 1);
         break;
 
     default:
@@ -620,6 +406,22 @@ uint8_t process_command(uint8_t *rx_buf, uint16_t length)
         break;
     }
     return remain;
+}
+
+void *OSPOut_driver_GetBuffer(void)
+{
+    return AllocBlock(SensorDataPacketPool);
+}
+
+void OSPOut_driver_PutBuffer(void *buf, int len)
+{
+    EnQueue(_HiFNonWakeupQueue, buf);
+}
+
+void OSPOut_driver_Initialize((void )(*ReceiveCB)(void *buf, int len))
+{
+    err = QInitialize();
+    PacketRcv = ReceiveCB;
 }
 
 /**********************************************************************
@@ -657,83 +459,6 @@ ASF_TASK void I2CCommTask(ASF_TASK_ARG)
         ASFReceiveMessage(I2CSLAVE_COMM_TASK_ID, &rcvMsg );
 
         switch (rcvMsg->msgId) {
-
-        case MSG_SENSOR_ENABLE:
-            SensorEnable((ASensorType_t)rcvMsg->msg.msgSensEnable.U.dword);
-            break;
-
-        case MSG_SENSOR_DISABLE:
-            SensorDisable((ASensorType_t)rcvMsg->msg.msgSensDisable.U.dword);
-            break;
-
-        case MSG_ACC_DATA:
-            SendSensorData(AP_PSENSOR_ACCELEROMETER_UNCALIBRATED,
-                    &rcvMsg->msg.msgAccelData);
-            break;
-        case MSG_MAG_DATA:
-            SendSensorData(SENSOR_MAGNETIC_FIELD_UNCALIBRATED,
-                    &rcvMsg->msg.msgMagData);
-            break;
-        case MSG_GYRO_DATA:
-            SendSensorData(SENSOR_GYROSCOPE_UNCALIBRATED,
-                    &rcvMsg->msg.msgGyroData);
-            break;
-        case MSG_CAL_ACC_DATA:
-            SendSensorData(SENSOR_ACCELEROMETER,
-                    &rcvMsg->msg.msgAccelData);
-            break;
-        case MSG_CAL_MAG_DATA:
-            SendSensorData(SENSOR_MAGNETIC_FIELD,
-                    &rcvMsg->msg.msgMagData);
-            break;
-        case MSG_CAL_GYRO_DATA:
-            SendSensorData(SENSOR_GYROSCOPE,
-                    &rcvMsg->msg.msgGyroData);
-            break;
-        case MSG_ORIENTATION_DATA:
-            SendSensorData(SENSOR_ORIENTATION,
-                    &rcvMsg->msg.msgOrientationData);
-            break;
-        case MSG_QUATERNION_DATA:
-            SendSensorData(SENSOR_ROTATION_VECTOR,
-                    &rcvMsg->msg.msgQuaternionData);
-            break;
-        case MSG_GEO_QUATERNION_DATA:
-            SendSensorData(SENSOR_GEOMAGNETIC_ROTATION_VECTOR,
-                    &rcvMsg->msg.msgQuaternionData);
-            break;
-        case MSG_GAME_QUATERNION_DATA:
-            SendSensorData(SENSOR_GAME_ROTATION_VECTOR,
-                    &rcvMsg->msg.msgQuaternionData);
-            break;
-
-        case MSG_STEP_COUNT_DATA:
-            SendSensorData(SENSOR_STEP_COUNTER,
-                    &rcvMsg->msg.msgStepCountData);
-            break;
-        case MSG_CD_SEGMENT_DATA:
-            break;
-        case MSG_LINEAR_ACCELERATION_DATA:
-            SendSensorData(SENSOR_LINEAR_ACCELERATION,
-                    &rcvMsg->msg.msgLinearAccelerationData);
-            break;
-        case MSG_GRAVITY_DATA:
-            SendSensorData(SENSOR_GRAVITY,
-                    &rcvMsg->msg.msgGravityData);
-            break;
-        case MSG_STEP_DETECT_DATA:
-            SendSensorBoolData(SENSOR_STEP_DETECTOR,
-                    &rcvMsg->msg.msgStepDetData);
-            break;
-        case MSG_SIG_MOTION_DATA:
-            SendSensorBoolData(SENSOR_SIGNIFICANT_MOTION,
-                    &rcvMsg->msg.msgSigMotionData);
-            D0_printf("SigMotion\n");
-            break;
-        case MSG_PRESS_DATA:
-            SendSensorData(SENSOR_PRESSURE,
-                    &rcvMsg->msg.msgPressData);
-            break;
         default:
             D1_printf("I2C:!!!UNHANDLED MESSAGE:%d!!!\r\n", rcvMsg->msgId);
             break;
@@ -741,43 +466,11 @@ ASF_TASK void I2CCommTask(ASF_TASK_ARG)
     }
 }
 
-
-/****************************************************************************************************
- * @fn      SendSensorEnableReq
- *          Sends message to the communication task to handle enable request received
- *
- * @param   [IN]sensor - Android sensor enum
- *
- * @return  none
- *
- ***************************************************************************************************/
-void SendSensorEnableReq( ASensorType_t sensor )
-{
-    MessageBuffer *pSendMsg = NULLP;
-    ASF_assert( ASFCreateMessage( MSG_SENSOR_ENABLE, sizeof(MsgGeneric), &pSendMsg ) == ASF_OK );
-    pSendMsg->msg.msgSensEnable.U.dword = sensor;
-    ASF_assert( ASFSendMessage( I2CSLAVE_COMM_TASK_ID, pSendMsg ) == ASF_OK );
-}
-
-
-/****************************************************************************************************
- * @fn      SendSensorDisableReq
- *          Sends message to the communication task to handle disable request received
- *
- * @param   [IN]sensor - Android sensor enum
- *
- * @return  none
- *
- ***************************************************************************************************/
-void SendSensorDisableReq( ASensorType_t sensor )
-{
-    MessageBuffer *pSendMsg = NULLP;
-    ASF_assert( ASFCreateMessage( MSG_SENSOR_DISABLE, sizeof(MsgGeneric), &pSendMsg ) == ASF_OK );
-    pSendMsg->msg.msgSensDisable.U.dword = sensor;
-    ASF_assert( ASFSendMessage( I2CSLAVE_COMM_TASK_ID, pSendMsg ) == ASF_OK );
-}
-
-
+struct _Driver_OUT Driver_OUT = {
+	.initialize = OSPOut_driver_Initialize,
+	.PutBuffer = OSPOut_driver_PutBuffer,
+	.GetBuffer = OSPOut_driver_GetBuffer,
+};
 #endif //ANDROID_COMM_TASK
 
 /*-------------------------------------------------------------------------------------------------*\

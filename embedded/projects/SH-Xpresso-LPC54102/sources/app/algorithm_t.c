@@ -21,6 +21,8 @@
 #include "common.h"
 #include "osp-api.h"
 #include "osp-sensors.h"    // defines android and private sensor types
+#include "data2pack.h"
+#include "Driver_OUT.h"
 
 /*-------------------------------------------------------------------------------------------------*\
  |    E X T E R N A L   V A R I A B L E S   &   F U N C T I O N S
@@ -288,7 +290,6 @@ static void GenericDataResultCallback(ResultHandle_t resultHandle,
     ASensorType_t sensorType;
     enum MessageIdTag msg_type;
     MessageBuffer *pSample = NULLP;
-    osp_bool_t sendMessage = TRUE;
 
     // A callback with NULL handle should never happen but check it anyway
     if ( resultHandle == NULL ) {
@@ -300,106 +301,30 @@ static void GenericDataResultCallback(ResultHandle_t resultHandle,
 
     // Android sensor result
     switch (sensorType) {
-
-    case SENSOR_ACCELEROMETER:
-    {
-        Android_TriAxisPreciseData_t* pData =
-            (Android_TriAxisPreciseData_t *) pOutput;
-
-        ASF_assert(ASFCreateMessage(MSG_CAL_ACC_DATA,
-                                    sizeof(MsgAccelData),
-                                    &pSample) == ASF_OK);
-
-        pSample->msg.msgAccelData.X = pData->X;
-        pSample->msg.msgAccelData.Y = pData->Y;
-        pSample->msg.msgAccelData.Z = pData->Z;
-        pSample->msg.msgAccelData.timeStamp = pData->TimeStamp;
-
-        if ( g_logging & 0x40 ) {
-            snprintf(outBuff, DPRINTF_BUFF_SIZE, "A, %6.3f, %03.4f, %03.4f, %03.4f",
-                    TOFLT_TIME(pData->TimeStamp), TOFLT_PRECISE(pData->X),
-            TOFLT_PRECISE(pData->Y), TOFLT_PRECISE(pData->Z));
-        }
-        break;
-    }
-
-    case SENSOR_MAGNETIC_FIELD:
-    {
-        Android_TriAxisExtendedData_t* pData =
-            (Android_TriAxisExtendedData_t *) pOutput;
-
-        ASF_assert(ASFCreateMessage(MSG_CAL_MAG_DATA,
-                                    sizeof(MsgMagData),
-                                    &pSample) == ASF_OK);
-
-        pSample->msg.msgMagData.X = pData->X;
-        pSample->msg.msgMagData.Y = pData->Y;
-        pSample->msg.msgMagData.Z = pData->Z;
-        pSample->msg.msgMagData.timeStamp = pData->TimeStamp;
-
-        if (g_logging & 0x40) {
-            snprintf(outBuff, DPRINTF_BUFF_SIZE,"M, %6.3f, %03.4f, %03.4f, %03.4f",
-                    TOFLT_TIME(pData->TimeStamp), TOFLT_EXTENDED(pData->X),
-            TOFLT_EXTENDED(pData->Y), TOFLT_EXTENDED(pData->Z));
-        }
-        break;
-    }
-
     case SENSOR_GYROSCOPE:
-    {
-        Android_TriAxisPreciseData_t* pData =
-            (Android_TriAxisPreciseData_t *) pOutput;
-
-        ASF_assert(ASFCreateMessage(MSG_CAL_GYRO_DATA,
-                                    sizeof(MsgGyroData),
-                                    &pSample) == ASF_OK);
-
-        pSample->msg.msgGyroData.X = pData->X;
-        pSample->msg.msgGyroData.Y = pData->Y;
-        pSample->msg.msgGyroData.Z = pData->Z;
-        pSample->msg.msgGyroData.timeStamp = pData->TimeStamp;
-
-        if (g_logging & 0x40) {
-            snprintf(outBuff, DPRINTF_BUFF_SIZE,"G, %6.3f, %03.4f, %03.4f, %03.4f",
-                    TOFLT_TIME(pData->TimeStamp), TOFLT_PRECISE(pData->X),
-            TOFLT_PRECISE(pData->Y), TOFLT_PRECISE(pData->Z));
-        }
+    case SENSOR_ACCELEROMETER:
+        OSPOut_triaxis(sensorType, (Android_TriAxisPreciseData_t *)pOutput);
+        if ( g_logging & 0x40 )
+            snprintf(outBuff, DPRINTF_BUFF_SIZE, "%c, %6.3f, %03.4f, %03.4f, %03.4f",
+                (sensorType == SENSOR_GYROSCOPE)?'G':'A',
+                TOFLT_TIME((Android_TriAxisPreciseData_t *)pOutput->TimeStamp),
+                TOFLT_PRECISE((Android_TriAxisPreciseData_t *)pOutput->X),
+                TOFLT_PRECISE((Android_TriAxisPreciseData_t *)pOutput->Y),
+                TOFLT_PRECISE((Android_TriAxisPreciseData_t *)pOutput->Z));
         break;
-    }
-
+    case SENSOR_MAGNETIC_FIELD:
+        OSPOut_triaxis(sensorType, (Android_TriAxisPreciseData_t *)pOutput);
+        if (g_logging & 0x40)
+            snprintf(outBuff, DPRINTF_BUFF_SIZE,"M, %6.3f, %03.4f, %03.4f, %03.4f",
+                TOFLT_TIME(pData->TimeStamp),
+                TOFLT_EXTENDED((Android_TriAxisExtendedData_t *) pOutput->X),
+                TOFLT_EXTENDED((Android_TriAxisExtendedData_t *) pOutput->Y),
+                TOFLT_EXTENDED((Android_TriAxisExtendedData_t *) pOutput->Z));
+        break;
     case SENSOR_ROTATION_VECTOR:
     case SENSOR_GAME_ROTATION_VECTOR:
     case SENSOR_GEOMAGNETIC_ROTATION_VECTOR:
-    {
-        Android_RotationVectorResultData_t *pRotVecOut =
-            (Android_RotationVectorResultData_t *)pOutput;
-
-        switch(sensorType) {
-        case SENSOR_GEOMAGNETIC_ROTATION_VECTOR:
-            msg_type = MSG_GEO_QUATERNION_DATA;
-            break;
-        case SENSOR_GAME_ROTATION_VECTOR:
-            msg_type = MSG_GAME_QUATERNION_DATA;
-            break;
-        case SENSOR_ROTATION_VECTOR:
-        default:
-            msg_type = MSG_QUATERNION_DATA;
-            break;
-        }
-
-        ASF_assert(ASFCreateMessage(msg_type,
-                                    sizeof(MsgQuaternionData),
-                                    &pSample) == ASF_OK);
-
-        pSample->msg.msgQuaternionData.W = pRotVecOut->W;
-        pSample->msg.msgQuaternionData.X = pRotVecOut->X;
-        pSample->msg.msgQuaternionData.Y = pRotVecOut->Y;
-        pSample->msg.msgQuaternionData.Z = pRotVecOut->Z;
-        pSample->msg.msgQuaternionData.HeadingError = pRotVecOut->HeadingErrorEst;
-        pSample->msg.msgQuaternionData.TiltError = pRotVecOut->TiltErrorEst;
-        pSample->msg.msgQuaternionData.timeStamp = pRotVecOut->TimeStamp;
-
-
+        OSPOut_triaxis(sensorType, (Android_TriAxisPreciseData_t *)pOutput);
         if (g_logging & 0x40 ) {
             int32_t offset;
             switch(sensorType) {
@@ -415,213 +340,86 @@ static void GenericDataResultCallback(ResultHandle_t resultHandle,
             }
 
             snprintf(&outBuff[offset], DPRINTF_BUFF_SIZE - offset,
-                    "%6.3f, %.6f, %.6f, %.6f, %.6f",
-                                TOFLT_TIME(pRotVecOut->TimeStamp),
-                                TOFLT_PRECISE(pRotVecOut->W),
-                                TOFLT_PRECISE(pRotVecOut->X),
-                                TOFLT_PRECISE(pRotVecOut->Y),
-                                TOFLT_PRECISE(pRotVecOut->Z));
+               "%6.3f, %.6f, %.6f, %.6f, %.6f",
+               TOFLT_TIME((Android_RotationVectorResultData_t *)pOutput->TimeStamp),
+               TOFLT_PRECISE((Android_RotationVectorResultData_t *)pOutput->W),
+               TOFLT_PRECISE((Android_RotationVectorResultData_t *)pOutput->X),
+               TOFLT_PRECISE((Android_RotationVectorResultData_t *)pOutput->Y),
+               TOFLT_PRECISE((Android_RotationVectorResultData_t *)pOutput->Z));
         }
         break;
-    }
     case SENSOR_ORIENTATION:
-    {
-        Android_OrientationResultData_t *pOrientOut =
-            (Android_OrientationResultData_t *)pOutput;
-
-        ASF_assert(ASFCreateMessage(MSG_ORIENTATION_DATA,
-                                    sizeof(MsgOrientationData),
-                                    &pSample) == ASF_OK);
-        pSample->msg.msgOrientationData.X = pOrientOut->Pitch;
-        pSample->msg.msgOrientationData.Y = pOrientOut->Roll;
-        pSample->msg.msgOrientationData.Z = pOrientOut->Yaw;
-        pSample->msg.msgOrientationData.timeStamp = pOrientOut->TimeStamp;
-
-        if ( g_logging & 0x40 ) {
+        OSPOut_triaxis(sensorType, (Android_TriAxisPreciseData_t *)pOutput);
+        if ( g_logging & 0x40 )
             snprintf(outBuff, DPRINTF_BUFF_SIZE,"I, %6.3f, %3.4f, %3.4f, %3.4f",
-                        TOFLT_TIME(pOrientOut->TimeStamp),
-                        TOFLT_EXTENDED(pOrientOut->Yaw),
-                        TOFLT_EXTENDED(pOrientOut->Pitch),
-                        TOFLT_EXTENDED(pOrientOut->Roll));
-        }
+                TOFLT_TIME((Android_OrientationResultData_t *)pOutput->TimeStamp),
+                TOFLT_EXTENDED((Android_OrientationResultData_t *)pOutput->Yaw),
+                TOFLT_EXTENDED((Android_OrientationResultData_t *)pOutput->Pitch),
+                TOFLT_EXTENDED((Android_OrientationResultData_t *)pOutput->Roll));
         break;
-    }
-
     case SENSOR_GRAVITY:
     case SENSOR_LINEAR_ACCELERATION:
-    {
-        Android_TriAxisPreciseData_t *pTriAxisOut =
-            (Android_TriAxisPreciseData_t *)pOutput;
-
-        if (sensorType == SENSOR_GRAVITY) {
-            msg_type = MSG_GRAVITY_DATA;
-        } else {
-            msg_type = MSG_LINEAR_ACCELERATION_DATA;
-        }
-
-        ASF_assert(ASFCreateMessage(msg_type,
-                                    sizeof(MsgGenericTriAxisData),
-                                    &pSample) == ASF_OK);
-        /* msgGravityData and msgLinearAcceleration are a union of the same type */
-        pSample->msg.msgGravityData.X = pTriAxisOut->X;
-        pSample->msg.msgGravityData.Y = pTriAxisOut->Y;
-        pSample->msg.msgGravityData.Z = pTriAxisOut->Z;
-        pSample->msg.msgGravityData.timeStamp = pTriAxisOut->TimeStamp;
-
-        if ( g_logging & 0x40 ) {
-            if ( sensorType == SENSOR_GRAVITY ) {
-                snprintf(outBuff, DPRINTF_BUFF_SIZE,"GR: %6.3f, %3.4f, %3.4f, %3.4f",
-                        TOFLT_TIME(pTriAxisOut->TimeStamp),
-                        TOFLT_PRECISE(pTriAxisOut->X),
-                        TOFLT_PRECISE(pTriAxisOut->Y),
-                        TOFLT_PRECISE(pTriAxisOut->Z));
-            }
-            if ( sensorType == SENSOR_LINEAR_ACCELERATION ) {
-                snprintf(outBuff, DPRINTF_BUFF_SIZE,"LN: %6.3f, %3.4f, %3.4f, %3.4f",
-                        TOFLT_TIME(pTriAxisOut->TimeStamp),
-                        TOFLT_PRECISE(pTriAxisOut->X),
-                        TOFLT_PRECISE(pTriAxisOut->Y),
-                        TOFLT_PRECISE(pTriAxisOut->Z));
-            }
-        }
+        OSPOut_triaxis(sensorType, (Android_TriAxisPreciseData_t *)pOutput);
+        if ( g_logging & 0x40 )
+            snprintf(outBuff, DPRINTF_BUFF_SIZE,"%s: %6.3f, %3.4f, %3.4f, %3.4f",
+                (sensorType == SENSOR_GRAVITY)?"GR":"LN",
+                TOFLT_TIME((Android_TriAxisPreciseData_t *)pOutput->TimeStamp),
+                TOFLT_PRECISE((Android_TriAxisPreciseData_t *)pOutput->X),
+                TOFLT_PRECISE((Android_TriAxisPreciseData_t *)pOutput->Y),
+                TOFLT_PRECISE((Android_TriAxisPreciseData_t *)pOutput->Z));
 
         break;
-    }
-
     case SENSOR_MAGNETIC_FIELD_UNCALIBRATED:
-    {
-        Android_UncalibratedTriAxisExtendedData_t *pData =
-            (Android_UncalibratedTriAxisExtendedData_t *) pOutput;
-
-        ASF_assert(ASFCreateMessage(MSG_MAG_DATA,
-                                    sizeof(MsgMagData),
-                                    &pSample) == ASF_OK);
-        pSample->msg.msgMagData.X = pData->X;
-        pSample->msg.msgMagData.Y = pData->Y;
-        pSample->msg.msgMagData.Z = pData->Z;
-        pSample->msg.msgMagData.timeStamp = pData->TimeStamp;
-
-        if (g_logging & 0x40) {
+        OSPOut_triaxis(sensorType, (Android_TriAxisPreciseData_t *)pOutput);
+        if (g_logging & 0x40)
             snprintf(outBuff, DPRINTF_BUFF_SIZE,"RM, %6.3f, %03.4f, %03.4f, %03.4f",
-                        TOFLT_TIME(pData->TimeStamp),
-                        TOFLT_EXTENDED(pData->X),
-                        TOFLT_EXTENDED(pData->Y),
-                        TOFLT_EXTENDED(pData->Z));
-        }
+                TOFLT_TIME((Android_UncalibratedTriAxisExtendedData_t *) pOutput->TimeStamp),
+                TOFLT_EXTENDED((Android_UncalibratedTriAxisExtendedData_t *) pOutput->X),
+                TOFLT_EXTENDED((Android_UncalibratedTriAxisExtendedData_t *) pOutput->Y),
+                TOFLT_EXTENDED((Android_UncalibratedTriAxisExtendedData_t *) pOutput->Z));
         break;
-    }
-
     case SENSOR_GYROSCOPE_UNCALIBRATED:
-    {
-       Android_UncalibratedTriAxisPreciseData_t *pData =
-            (Android_UncalibratedTriAxisPreciseData_t *) pOutput;
-
-        ASF_assert(ASFCreateMessage(MSG_GYRO_DATA,
-                                    sizeof(MsgGyroData),
-                                    &pSample) == ASF_OK);
-        pSample->msg.msgGyroData.X = pData->X;
-        pSample->msg.msgGyroData.Y = pData->Y;
-        pSample->msg.msgGyroData.Z = pData->Z;
-        pSample->msg.msgGyroData.timeStamp = pData->TimeStamp;
-
-        if (g_logging & 0x40) {
+        OSPOut_triaxis(sensorType, (Android_TriAxisPreciseData_t *)pOutput);
+        if (g_logging & 0x40)
             snprintf(outBuff, DPRINTF_BUFF_SIZE,"RG, %6.3f, %03.4f, %03.4f, %03.4f",
-                        TOFLT_TIME(pData->TimeStamp),
-                        TOFLT_EXTENDED(pData->X),
-                        TOFLT_EXTENDED(pData->Y),
-                        TOFLT_EXTENDED(pData->Z));
-        }
+                        TOFLT_TIME((Android_UncalibratedTriAxisPreciseData_t *) pOutput->TimeStamp),
+                        TOFLT_EXTENDED((Android_UncalibratedTriAxisPreciseData_t *) pOutput->X),
+                        TOFLT_EXTENDED((Android_UncalibratedTriAxisPreciseData_t *) pOutput->Y),
+                        TOFLT_EXTENDED((Android_UncalibratedTriAxisPreciseData_t *) pOutput->Z));
         break;
-    }
-
     case SENSOR_SIGNIFICANT_MOTION:
-    {
-        Android_BooleanResultData_t *pData =
-            (Android_BooleanResultData_t *) pOutput;
-
-        ASF_assert(ASFCreateMessage(MSG_SIG_MOTION_DATA,
-                                    sizeof(MsgSigMotionData),
-                                    &pSample) == ASF_OK);
-        pSample->msg.msgSigMotionData.active = pData->data;
-        pSample->msg.msgSigMotionData.timeStamp = pData->TimeStamp;
-
+        OSPOut_Bool(sensorType, (Android_BooleanResultData_t *)pOutput);
         snprintf(outBuff, DPRINTF_BUFF_SIZE,"SM,%+03.4f,%d",
-                        TOFLT_TIME(pData->TimeStamp),
-                        pData->data);
+                        TOFLT_TIME(pOutput->TimeStamp),
+                        (Android_BooleanResultData_t *) pOutput->data);
        break;
-    }
-
     case SENSOR_STEP_COUNTER:
-    {
-        Android_StepCounterResultData_t *pData =
-            (Android_StepCounterResultData_t *) pOutput;
-
-        ASF_assert(ASFCreateMessage(MSG_STEP_COUNT_DATA,
-                                    sizeof(MsgStepData),
-                                    &pSample) == ASF_OK);
-        pSample->msg.msgStepCountData.X = pData->StepCount;
-        pSample->msg.msgStepCountData.Y = 0;       // not use
-        pSample->msg.msgStepCountData.Z = 0;       // not use
-        pSample->msg.msgStepCountData.timeStamp = pData->TimeStamp;
-
+        OSPOut_triaxis(sensorType, (Android_TriAxisPreciseData_t *)pOutput);
         snprintf(outBuff, DPRINTF_BUFF_SIZE,"SC,%+03.4f,%d,0",
-                        TOFLT_TIME(pData->TimeStamp),
-                        pData->StepCount);
+                        TOFLT_TIME(pOutput->TimeStamp),
+                        (Android_StepCounterResultData_t *)pOutput->StepCount);
         break;
-    }
 
     case SENSOR_STEP_DETECTOR:
-    {
-        Android_BooleanResultData_t *pData =
-            (Android_BooleanResultData_t *) pOutput;
-
-        ASF_assert(ASFCreateMessage(MSG_STEP_DETECT_DATA,
-                                    sizeof(MsgStepDetData),
-                                    &pSample) == ASF_OK);
-        pSample->msg.msgStepDetData.active = TRUE;
-        pSample->msg.msgStepDetData.timeStamp = pData->TimeStamp;
-
+        OSPOut_Bool(sensorType, (Android_BooleanResultData_t *)pOutput);
         snprintf(outBuff, DPRINTF_BUFF_SIZE,"SD,%+03.4f",
-                    TOFLT_TIME(pData->TimeStamp));
+                    TOFLT_TIME(pOutput->TimeStamp));
         break;
-    }
     case AP_PSENSOR_ACCELEROMETER_UNCALIBRATED:
-    {
-        Android_UncalibratedTriAxisPreciseData_t *pData =
-            (Android_UncalibratedTriAxisPreciseData_t *) pOutput;
-
-        ASF_assert(ASFCreateMessage(MSG_ACC_DATA,
-                    sizeof(MsgAccelData),
-                    &pSample) == ASF_OK);
-        pSample->msg.msgAccelData.X = pData->X;
-        pSample->msg.msgAccelData.Y = pData->Y;
-        pSample->msg.msgAccelData.Z = pData->Z;
-        pSample->msg.msgAccelData.timeStamp = pData->TimeStamp;
-
-
-        if (g_logging & 0x40) {
+        OSPOut_triaxis(sensorType, (Android_TriAxisPreciseData_t *)pOutput);
+        if (g_logging & 0x40)
             snprintf(outBuff, DPRINTF_BUFF_SIZE,"RA, %6.3f, %03.4f, %03.4f, %03.4f",
-                    TOFLT_TIME(pData->TimeStamp),
-                    TOFLT_PRECISE(pData->X),
-                    TOFLT_PRECISE(pData->Y),
-                    TOFLT_PRECISE(pData->Z));
-        }
+                TOFLT_TIME((Android_UncalibratedTriAxisPreciseData_t *) pOutput->TimeStamp),
+                TOFLT_PRECISE((Android_UncalibratedTriAxisPreciseData_t *) pOutput->X),
+                TOFLT_PRECISE((Android_UncalibratedTriAxisPreciseData_t *) pOutput->Y),
+                TOFLT_PRECISE((Android_UncalibratedTriAxisPreciseData_t *) pOutput->Z));
         break;
-    }
-
     default:
         D0_printf("%s not handling sensor type %i\r\n", __FUNCTION__, sensorType);
-        sendMessage = FALSE;
-        break;
+        return;
     }
 
-    /* Now send the created message to the I2C slave task to route to host.*/
-    if ( sendMessage ) {
-       if (!(ASFSendMessage(I2CSLAVE_COMM_TASK_ID, pSample) == ASF_OK)) {
-            D0_printf("Message Send Error!\r\n");
-        }
-        if ( g_logging & 0x40) Print_LIPS("%s", outBuff);
-    }
+    if ( g_logging & 0x40) Print_LIPS("%s", outBuff);
 }
 
 
@@ -805,7 +603,7 @@ ASF_TASK  void AlgorithmTask (ASF_TASK_ARG)
     OSP_STATUS_t OSP_Status;
     static uint32_t mycount = 0;
 
-
+    Driver_OUT.initialize(PacketReceive);
     OSP_GetLibraryVersion(&version);
     D1_printf("OSP Version: %s\r\n", version->VersionString);
 
