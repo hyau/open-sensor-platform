@@ -39,9 +39,6 @@ void CHostif_StartTxChained(uint8_t *pBuf, uint16_t size, uint8_t *pBuf_next, ui
 /*-------------------------------------------------------------------------*\
  |    E X T E R N A L   V A R I A B L E S   &   F U N C T I O N S
 \*-------------------------------------------------------------------------*/
-OSP_STATUS_t Algorithm_SubscribeSensor( ASensorType_t sensor);
-OSP_STATUS_t Algorithm_UnsubscribeSensor( ASensorType_t sensor);
-
 
 /*-------------------------------------------------------------------------*\
  |    P R I V A T E   C O N S T A N T S   &   M A C R O S
