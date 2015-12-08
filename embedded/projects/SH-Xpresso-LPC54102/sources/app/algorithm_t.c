@@ -675,7 +675,12 @@ ASF_TASK  void AlgorithmTask (ASF_TASK_ARG)
             } while(OSP_Status != OSP_STATUS_IDLE); //keep doing foreground computation until its finished
 
             break;
-
+        case MSG_SENSOR_ENABLE:
+            OSPSensor_ctrl_SensorDisable((ASensorType_t)rcvMsg->msg.msgSensEnable.U.dword);
+            break;
+        case MSG_SENSOR_DISABLE:
+            OSPSensor_ctrl_SensorEnable((ASensorType_t)rcvMsg->msg.msgSensDisable.U.dword);
+            break;
         default:
             /* Unhandled messages */
             D1_printf("Alg-FG:!!!UNHANDLED MESSAGE:%d!!!\r\n", rcvMsg->msgId);

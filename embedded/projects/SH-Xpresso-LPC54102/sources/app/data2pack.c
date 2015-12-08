@@ -247,7 +247,7 @@ void SendSensorEnableReq(ASensorType_t sensor)
 	MessageBuffer *pSendMsg = NULLP;
 	ASF_assert(ASFCreateMessage(MSG_SENSOR_ENABLE, sizeof(MsgGeneric), &pSendMsg) == ASF_OK);
 	pSendMsg->msg.msgSensEnable.U.dword = sensor;
-	ASF_assert(ASFSendMessage(I2CSLAVE_COMM_TASK_ID, pSendMsg) == ASF_OK);
+	ASF_assert(ASFSendMessage(ALGORITHM_TASK_ID, pSendMsg) == ASF_OK);
 }
 
 
@@ -267,7 +267,7 @@ void SendSensorDisableReq(ASensorType_t sensor)
 	ASF_assert(ASFCreateMessage(MSG_SENSOR_DISABLE, sizeof(MsgGeneric),
 			&pSendMsg) == ASF_OK);
 	pSendMsg->msg.msgSensDisable.U.dword = sensor;
-	ASF_assert(ASFSendMessage(I2CSLAVE_COMM_TASK_ID, pSendMsg) == ASF_OK);
+	ASF_assert(ASFSendMessage(ALGORITHM_TASK_ID, pSendMsg) == ASF_OK);
 }
 
 void PacketReceive(void *pack, int len)
