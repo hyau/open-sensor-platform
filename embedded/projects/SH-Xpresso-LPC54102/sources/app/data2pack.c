@@ -276,6 +276,87 @@ void PacketReceive(void *pack, int len)
 	ParseHostInterfacePkt(&Out, &rx_buf[1], length-1);
 }
 
-/*-------------------------------------------------------------------------------------------------*\
+/* ----------------------------------------- */
+static uint32_t SensorState[2];
+/* Use native word size */
+static int SensorCtrl = 0;
+
+void OSPSensor_ctrl_init(void)
+{
+	SensorState[0] = 1 << SENSOR_SIGNIFICANT_MOTION;
+	SensorState[1] = 0;
+	
+	SensorCtrl = 1;	
+}
+
+void OSPSensor_ctrl_SensorEnable(ASensorType_t sen)
+{
+	int v = (int)sen;
+	int set;
+
+	/* Abort if not initialized */
+	if (!SensorCtrl) return;
+
+	if (v < 32) {
+		set = (1<<v);
+		SensorState[0] |= set;
+	} else {
+		set = (1<<(v-32));
+		SensorState[1] |= set;
+	}
+	// Why hardcode significant motion enable ?
+	SensorState[0] |= 1 << SENSOR_SIGNIFICANT_MOTION;
+
+	/* Now subscribe to the algorithm to enable this sensor */
+	Algorithm_SubscribeSensor(sen);
+}
+
+void OSPSensor_ctrl_SensorDisable(ASensorType_t sen)
+{
+	int v = (int)sen;
+	int set;
+
+	/* Abort if not initialized */
+	if (!SensorCtrl) return;
+
+	if (v < 32) {
+		set = (1<<v);
+		SensorState[0] &= ~set;
+	} else {
+		set = (1<<(v-32));
+		SensorState[1] &= ~set;
+	}
+
+	// Why hardcode this sensor?
+	SensorState[0] |= 1 << SENSOR_SIGNIFICANT_MOTION;
+
+	// Now un-subscribe this sensor from the algorithm
+	Algorithm_UnsubscribeSensor(sen);
+}
+
+int OSPSensor_ctrl_GetSensorState(ASensorType_t sen)
+{
+	int v = (int)sen;
+	int set;
+
+	/* Abort if not initialized */
+	if (!SensorCtrl) return;
+
+	if (v < 32) {
+		/* Standard Android sensor enum value */
+		set = (1<<v);
+		if (SensorState[0] & set) return 1;
+		return 0;
+	} else {
+		/* Private android sensor.
+		 * FIXME: Need to mask out the private mask bit
+		 * before apply the bit shift operation */
+		set = (1<<(v-32));
+		if (SensorState[1] & set) return 1;
+		return 0;
+	}
+}
+
+/*---------------------------------------------------------------------------*\
  |	E N D   O F   F I L E
-\*-------------------------------------------------------------------------------------------------*/
+\*---------------------------------------------------------------------------*/

@@ -61,67 +61,6 @@ OSP_STATUS_t Algorithm_UnsubscribeSensor( ASensorType_t sensor);
 /* HIF Sensor Data Packet pool size */
 #define HIF_SENSOR_DATA_PACKET_POOL_SIZE            HIF_SENSOR_DATA_QUEUE_SIZE
 
-static uint32_t SensorState[2];
-
-// TODO: Need to call algorithm module to subscribe the enable sensor.
-static void SensorEnable(ASensorType_t sen)
-{
-    int v = (int)sen;
-    int set;
-
-    if (v < 32) {
-        set = (1<<v);
-        SensorState[0] |= set;
-    } else {
-        set = (1<<(v-32));
-        SensorState[1] |= set;
-    }
-    // Why hardcode significant motion enable ?
-    SensorState[0] |= 1 << SENSOR_SIGNIFICANT_MOTION;
-
-    /* Now subscribe to the algorithm to enable this sensor */
-    Algorithm_SubscribeSensor(sen);
-
-}
-
-// TODO: Need to call the algorithm to unsubscribe the sensor
-static void SensorDisable(ASensorType_t sen)
-{
-    int v = (int)sen;
-    int set;
-
-    if (v < 32) {
-        set = (1<<v);
-        SensorState[0] &= ~set;
-    } else {
-        set = (1<<(v-32));
-        SensorState[1] &= ~set;
-    }
-
-    // Why hardcode this sensor?
-    SensorState[0] |= 1 << SENSOR_SIGNIFICANT_MOTION;
-
-    // Now un-subscribe this sensor from the algorithm
-    Algorithm_UnsubscribeSensor(sen);
-}
-
-static int GetSensorState(ASensorType_t sen)
-{
-    int v = (int)sen;
-    int set;
-    if (v < 32) {
-        /* Standard Android sensor enum value */
-        set = (1<<v);
-        if (SensorState[0] & set) return 1;
-        return 0;
-    } else {
-        /* Private android sensor. FIXME: Need to mask out the private mask bit before apply the bit shift operation */
-        set = (1<<(v-32));
-        if (SensorState[1] & set) return 1;
-        return 0;
-    }
-}
-
 /*-------------------------------------------------------------------------*\
  |    P R I V A T E   T Y P E   D E F I N I T I O N S
 \*-------------------------------------------------------------------------*/
@@ -420,7 +359,18 @@ void OSPOut_driver_PutBuffer(void *buf, int len)
 
 void OSPOut_driver_Initialize((void )(*ReceiveCB)(void *buf, int len))
 {
+    int16_t err;
+    /* Initialize packet queue */
     err = QInitialize();
+    ASF_assert(err == OSP_STATUS_OK);
+    Hostif_Init();
+
+    /* Active high int, set to in active */
+    SensorHubDeAssertInt();
+
+    /* Init register area for slave */
+    SH_Slave_init();
+
     PacketRcv = ReceiveCB;
 }
 
@@ -437,21 +387,6 @@ void OSPOut_driver_Initialize((void )(*ReceiveCB)(void *buf, int len))
 ASF_TASK void I2CCommTask(ASF_TASK_ARG)
 {
     MessageBuffer *rcvMsg = NULLP;
-    int16_t err;
-
-    /* Initialize packet queue */
-    err = QInitialize();
-    ASF_assert(err == OSP_STATUS_OK);
-
-    Hostif_Init();
-    /* Active high int, set to in active */
-    SensorHubDeAssertInt();
-    /* Init register area for slave */
-    SH_Slave_init();
-
-    SensorState[0] = 0;
-    SensorState[1] = 0;
-    SensorState[0] = 1 << SENSOR_SIGNIFICANT_MOTION;
 
     D0_printf("%s-> I2C Slave ready\r\n", __FUNCTION__);
 

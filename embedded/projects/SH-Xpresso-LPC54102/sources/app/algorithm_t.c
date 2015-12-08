@@ -604,6 +604,9 @@ ASF_TASK  void AlgorithmTask (ASF_TASK_ARG)
     static uint32_t mycount = 0;
 
     Driver_OUT.initialize(PacketReceive);
+
+    OSPSensor_ctrl_init();
+
     OSP_GetLibraryVersion(&version);
     D1_printf("OSP Version: %s\r\n", version->VersionString);
 
